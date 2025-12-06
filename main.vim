@@ -1,9 +1,209 @@
+" 读取AI配置文件
+function! ReadAIConfig()
+  " 构建配置文件路径
+  let config_path = expand('~/.vim/ai-config.json')
+
+  " 检查配置文件是否存在且可读
+  if !filereadable(config_path)
+    return {'status': 0, 'message': '配置文件不存在'}
+  endif
+
+  " 读取配置文件内容
+  let config_content = readfile(config_path)
+  if empty(config_content)
+    return {'status': 4, 'message': '配置文件为空'}
+  endif
+
+  " 合并所有行（处理多行JSON）
+  let json_string = join(config_content, "\n")
+
+  " 使用安全JSON解析
+  let parse_result = SafeJsonDecode(json_string)
+  if !parse_result.success
+    return {'status': 3, 'message': 'JSON格式错误: ' . parse_result.error}
+  endif
+
+  let config = parse_result.data
+
+  " 验证配置数据结构
+  if type(config) != type({})
+    return {'status': 3, 'message': '配置文件必须为JSON对象'}
+  endif
+
+  " 检查必需字段
+  let required_fields = ['api_key', 'base_url', 'model']
+  let missing_fields = []
+  let valid_fields = {}
+
+  for field in required_fields
+    if has_key(config, field) && !empty(config[field])
+      let valid_fields[field] = config[field]
+    else
+      call add(missing_fields, field)
+    endif
+  endfor
+
+  " 根据缺失字段情况返回不同状态
+  if len(missing_fields) == 0
+    return {'status': 1, 'config': valid_fields, 'message': '配置完整有效'}
+  elseif len(valid_fields) > 0
+    return {'status': 2, 'config': valid_fields, 'missing': missing_fields, 'message': '配置部分缺失'}
+  else
+    return {'status': 3, 'message': '配置文件缺少所有必需字段'}
+  endif
+endfunction
+
+" 验证配置数据
+function! ValidateConfigData(config)
+  if type(a:config) != type({})
+    return {'valid': 0, 'error': '配置必须是字典类型'}
+  endif
+
+  " 验证api_key格式（基本检查）
+  if has_key(a:config, 'api_key')
+    let api_key = a:config.api_key
+    if len(api_key) < 10
+      return {'valid': 0, 'error': 'api_key格式无效（长度不足）'}
+    endif
+  endif
+
+  " 验证base_url格式（基本检查）
+  if has_key(a:config, 'base_url')
+    let base_url = a:config.base_url
+    if base_url !~ '^https\?://'
+      return {'valid': 0, 'error': 'base_url必须是有效的HTTP(S) URL'}
+    endif
+  endif
+
+  " 验证model格式
+  if has_key(a:config, 'model')
+    let model = a:config.model
+    if empty(model)
+      return {'valid': 0, 'error': 'model不能为空'}
+    endif
+  endif
+
+  return {'valid': 1}
+endfunction
+
 function! Init()
-  :source ai.vim
-  :call SetOpenAIKey(input("ApiKey: "))
-  :call SetOpenAIBaseUrl(input("BaseUrl："))
-  :call SetOpenAIModel(input("Model："))
-  :call SetSystemPrompt(GetSystemPromptTemplate())
+  " 使用多种方法确定脚本文件所在目录
+  let script_dir = ''
+
+  " 方法1：使用 <sfile>（如果可用）
+  try
+    let script_dir = expand('<sfile>:p:h')
+  catch
+    let script_dir = ''
+  endtry
+
+  " 方法2：如果<sfile>失败，尝试使用当前文件路径
+  if empty(script_dir) || !isdirectory(script_dir)
+    " 获取当前打开文件的路径
+    let current_file = expand('%:p')
+    if !empty(current_file)
+      let script_dir = fnamemodify(current_file, ':h')
+    endif
+  endif
+
+  " 方法3：如果还是失败，使用当前工作目录
+  if empty(script_dir) || !isdirectory(script_dir)
+    let script_dir = getcwd()
+  endif
+
+  " 尝试多个可能的ai.vim位置
+  let search_paths = [
+    \ script_dir . '/ai.vim',
+    \ script_dir . '/vimai/ai.vim',
+    \ getcwd() . '/ai.vim',
+    \ getcwd() . '/vimai/ai.vim',
+    \ expand('~/vimai/ai.vim'),
+    \ '/root/workspace/repo/vimai/ai.vim'
+    \ ]
+
+  let ai_vim_found = 0
+  let ai_vim_path = ''
+
+  " 在搜索路径中查找ai.vim
+  for path in search_paths
+    if filereadable(path)
+      let ai_vim_path = path
+      let ai_vim_found = 1
+      break
+    endif
+  endfor
+
+  if ai_vim_found
+    execute 'source ' . fnameescape(ai_vim_path)
+    " 为了调试，可以显示找到的路径
+    " echom "找到ai.vim在: " . ai_vim_path
+  else
+    echohl ErrorMsg
+    echo "错误：无法找到ai.vim文件"
+    echo "搜索过的路径："
+    for path in search_paths
+      echo "  - " . path
+    endfor
+    echohl None
+    return 1
+  endif
+
+  " 尝试读取配置文件
+  let config_result = ReadAIConfig()
+
+  if config_result.status == 1
+    " 配置完整有效，自动设置所有参数
+    echom "🔍 检测到配置文件 ~/.vim/ai-config.json"
+    echom "✅ 已自动配置：api_key, base_url, model"
+    call SetOpenAIKey(config_result.config.api_key)
+    call SetOpenAIBaseUrl(config_result.config.base_url)
+    call SetOpenAIModel(config_result.config.model)
+  elseif config_result.status == 2
+    " 配置部分缺失，设置已有参数，询问缺失参数
+    echom "🔍 检测到配置文件 ~/.vim/ai-config.json"
+    let configured_fields = []
+    if has_key(config_result.config, 'api_key')
+      call SetOpenAIKey(config_result.config.api_key)
+      call add(configured_fields, 'api_key')
+    endif
+    if has_key(config_result.config, 'base_url')
+      call SetOpenAIBaseUrl(config_result.config.base_url)
+      call add(configured_fields, 'base_url')
+    endif
+    if has_key(config_result.config, 'model')
+      call SetOpenAIModel(config_result.config.model)
+      call add(configured_fields, 'model')
+    endif
+    echom "✅ 已读取：" . join(configured_fields, ', ')
+    echom "❌ 缺少：" . join(config_result.missing, ', ')
+
+    " 询问缺失的参数
+    for field in config_result.missing
+      if field == 'api_key'
+        call SetOpenAIKey(input("ApiKey: "))
+      elseif field == 'base_url'
+        call SetOpenAIBaseUrl(input("BaseUrl："))
+      elseif field == 'model'
+        call SetOpenAIModel(input("Model："))
+      endif
+    endfor
+  elseif config_result.status == 3 || config_result.status == 4
+    " 配置文件格式错误或为空，显示错误信息并使用原逻辑
+    echohl WarningMsg
+    echo "⚠️ 配置文件问题：" . config_result.message
+    echo "使用交互式配置模式..."
+    echohl None
+    call SetOpenAIKey(input("ApiKey: "))
+    call SetOpenAIBaseUrl(input("BaseUrl："))
+    call SetOpenAIModel(input("Model："))
+  else
+    " 配置文件不存在，使用原逻辑
+    call SetOpenAIKey(input("ApiKey: "))
+    call SetOpenAIBaseUrl(input("BaseUrl："))
+    call SetOpenAIModel(input("Model："))
+  endif
+
+  call SetSystemPrompt(GetSystemPromptTemplate())
 endfunction
 
 function! Api(ApiType, ApiInfo)

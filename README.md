@@ -25,7 +25,49 @@ VimAI 是一个为 Vim 编辑器开发的智能助手插件，它将 OpenAI API 
 1. 将 `ai.vim` 和 `main.vim` 文件复制到你的 Vim 插件目录
 2. 或者在 `.vimrc` 中添加插件路径
 
+### 快速配置（30秒完成）
+**推荐方式**：创建配置文件自动配置
+```bash
+# 创建配置目录
+mkdir -p ~/.vim
+
+# 创建配置文件（替换为你的API密钥）
+echo '{
+  "api_key": "sk-your-api-key-here",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-3.5-turbo"
+}' > ~/.vim/ai-config.json
+```
+
+然后在 Vim 中运行：
+```vim
+:call Init()
+```
+
+🎉 完成！现在可以开始与AI对话了。
+
 ### 配置
+
+VimAI 支持两种配置方式：**配置文件** 和 **交互式配置**
+
+#### 方法一：配置文件（推荐）
+创建配置文件 `~/.vim/ai-config.json`：
+```json
+{
+  "api_key": "sk-your-api-key-here",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-3.5-turbo"
+}
+```
+
+然后在 Vim 中运行：
+```vim
+:call Init()
+```
+
+系统会自动读取配置文件中的设置。如果配置文件格式正确，将直接使用配置；如果格式错误或缺少字段，会提示你补充缺失的信息。
+
+#### 方法二：交互式配置
 在 Vim 中运行以下命令进行初始化：
 ```vim
 :call Init()
@@ -153,10 +195,27 @@ AI 可以通过以下 JSON 格式请求执行操作：
 
 ### 常见问题
 
+#### 配置文件问题
+**配置文件格式错误**
+- 确保使用有效的 JSON 格式
+- 检查是否缺少引号或逗号
+- 使用 JSON 验证工具检查格式
+
+**配置文件无法读取**
+- 确认文件路径：`~/.vim/ai-config.json`
+- 检查文件权限：确保可读
+- 验证文件是否存在：`:!ls ~/.vim/ai-config.json`
+
+**配置文件缺少字段**
+- 系统会提示缺失的字段
+- 可以选择补充缺失信息或重新创建配置文件
+- 完整配置需要：api_key、base_url、model
+
 #### API 调用失败
 - 检查网络连接
 - 确认 API 密钥有效
 - 检查 API 基础 URL 是否正确
+- 验证配置文件中的 api_key 格式
 
 #### AI 不执行操作
 - 确认你使用的是支持的 API 操作类型
