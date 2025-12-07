@@ -340,20 +340,28 @@ function! GetSystemPromptTemplate()
   let template .= "   失败返回: 错误码3(位置超出文件范围)\n"
   let template .= "   示例: {\"action\": \"MoveCursor\", \"parameters\": \"1,1\", \"reason\": \"移动到文件开头\"}\n\n"
 
-  let template .= "【响应模式说明】\n"
-  let template .= "你有两种响应模式，根据用户需求智能选择：\n\n"
+  let template .= "【响应模式说明 - 严格格式要求】\n"
+  let template .= "⚠️  重要警告：你的回复必须是纯JSON或纯文本，严禁混合！\n\n"
   let template .= "模式1: 直接文本回复（默认）\n"
   let template .= "- 用途: 回答问题、提供建议、解释概念、拒绝危险操作\n"
-  let template .= "- 格式: 直接输出自然语言文本\n"
-  let template .= "- 示例: 用户问\"什么是Vim？\"，你直接回答Vim的定义和特点\n\n"
+  let template .= "- 格式: 直接输出自然语言文本，绝对不能包含任何JSON格式内容\n"
+  let template .= "- 示例: 用户问\"什么是Vim？\"，你直接回答Vim的定义和特点\n"
+  let template .= "- ❌ 错误示例: \"这是一个回答，顺便执行操作：{\\"action\\": \\"ReadFile\\"...}\"\n\n"
   let template .= "模式2: API调用（需要执行操作时使用）\n"
   let template .= "- 用途: 需要读取文件、执行命令、修改编辑器等操作\n"
-  let template .= "- 格式: 严格按照JSON格式，包含action、parameters、reason三个字段\n"
-  let template .= "- 触发条件: 用户明确要求执行某个具体操作\n\n"
+  let template .= "- 格式: 严格按照JSON格式，包含action、parameters、reason三个字段，绝对不能包含任何额外文本\n"
+  let template .= "- 触发条件: 用户明确要求执行某个具体操作\n"
+  let template .= "- ❌ 错误示例: \"好的，我来帮你执行命令。{\\"action\\": \\"ExecuteShell\\"...}\"\n\n"
   let template .= "【如何选择响应模式】\n"
   let template .= "- 信息查询类: 优先直接回答，除非需要读取文件或执行命令获取信息\n"
   let template .= "- 操作执行类: 使用API调用模式，先请求用户确认\n"
   let template .= "- 危险操作: 直接拒绝并解释原因，不要使用API调用\n\n"
+  let template .= "【格式违规处理】\n"
+  let template .= "如果你违反格式要求，系统将直接报错并拒绝处理你的回复。\n"
+  let template .= "格式违规包括：\n"
+  let template .= "1. 文本回复中包含JSON格式内容\n"
+  let template .= "2. JSON回复中包含额外的文本说明\n"
+  let template .= "3. JSON格式不完整或包含多余字符\n\n"
 
   let template .= "【JSON响应格式规范】\n"
   let template .= "当需要执行操作时，你必须严格按照以下JSON格式响应，包含三个必需字段：\n"
@@ -403,7 +411,8 @@ function! GetSystemPromptTemplate()
   let template .= "1: 参数错误或API类型无效 - 检查输入参数格式是否正确\n"
   let template .= "2: 文件读取错误 - 文件不存在、无权限或文件损坏\n"
   let template .= "3: 位置错误 - 行号或列号超出文件实际范围\n"
-  let template .= "4: 解析错误 - 无法解析API响应或数据格式错误\n\n"
+  let template .= "4: 解析错误 - 无法解析API响应或数据格式错误\n"
+  let template .= "5: 格式违规 - AI回复同时包含JSON和文本内容，违反格式要求\n\n"
 
   let template .= "【安全警告】\n"
   let template .= "⚠️  禁止执行的操作：\n"
@@ -460,6 +469,8 @@ function! GetErrorMessage(error_code)
     return "❌ 错误：OpenAI API返回错误。可能是API密钥无效或请求格式错误。"
   elseif a:error_code == 4
     return "❌ 错误：无法解析AI响应。响应格式可能不正确。"
+  elseif a:error_code == 5
+    return "❌ 错误：AI回复格式违规 - 不能同时包含JSON和文本内容。"
   else
     return "❌ 错误：未知错误（错误码：" . a:error_code . "）"
   endif
@@ -522,6 +533,26 @@ endfunction
 
 " 解析AI响应并处理API调用
 function! ParseAndExecuteAIResponse(response)
+  " 新增：检测混合内容格式违规（简化版逻辑）
+  " 使用更简洁的检测方法
+  let trimmed_response = substitute(a:response, '^\s*', '', '')
+  let trimmed_response = substitute(trimmed_response, '\s*$', '', '')
+
+  " 检测是否为纯JSON格式（以{开头，以}结尾，包含必需的JSON字段）
+  let is_pure_json = trimmed_response =~# '^\s*\{\s*"action"' && trimmed_response =~# '}\s*$'
+
+  " 检测是否包含JSON字段但格式不纯
+  let has_json_fields = a:response =~# '"action"' || a:response =~# '"parameters"' || a:response =~# '"reason"'
+
+  " 如果发现格式违规：有JSON字段但不是纯JSON格式
+  if has_json_fields && !is_pure_json
+    echohl ErrorMsg
+    echo "❌ 格式违规错误：AI回复不能同时包含JSON和文本内容"
+    echo "违规内容: " . a:response[0:min([100, len(a:response)-1])] . "..."
+    echohl None
+    return GetErrorMessage(5)
+  endif
+
   let parse_result = ParseAIResponse(a:response)
 
   if !parse_result.is_json
@@ -686,6 +717,27 @@ function! TestJSONParsing()
   let result6 = ParseAndExecuteAIResponse(test_json6)
   echom "测试6输入: " . test_json6
   echom "测试6结果: " . result6
+  echom "---"
+
+  " 测试用例7：格式违规 - 文本中包含JSON
+  let test_json7 = "好的，我来帮你执行命令。{\"action\": \"ExecuteShell\", \"parameters\": \"ls -la\", \"reason\": \"显示文件列表\"}"
+  let result7 = ParseAndExecuteAIResponse(test_json7)
+  echom "测试7输入: " . test_json7
+  echom "测试7结果: " . result7
+  echom "---"
+
+  " 测试用例8：格式违规 - JSON前后有额外文本
+  let test_json8 = "我来帮你读取文件。{\"action\": \"ReadFile\", \"parameters\": \"\", \"reason\": \"获取文件内容\"} 执行完毕。"
+  let result8 = ParseAndExecuteAIResponse(test_json8)
+  echom "测试8输入: " . test_json8
+  echom "测试8结果: " . result8
+  echom "---"
+
+  " 测试用例9：格式违规 - JSON中间有文本
+  let test_json9 = '{"action": "ReadFile"} 这是一个违规的混合回复 {"parameters": "", "reason": "获取文件内容"}'
+  let result9 = ParseAndExecuteAIResponse(test_json9)
+  echom "测试9输入: " . test_json9
+  echom "测试9结果: " . result9
 endfunction
 
 " 显示详细的系统信息
